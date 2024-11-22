@@ -1,4 +1,5 @@
 import TonWeb from 'tonweb';
+import QRCode from 'qrcode';
 
 const tonweb = new TonWeb(new TonWeb.HttpProvider('https://toncenter.com/api/v2/jsonRPC'));
 
@@ -26,6 +27,25 @@ export const createEvent = async (name, date, ticketPrice, maxTickets) => {
     return result;
   } catch (error) {
     console.error('Error creating event:', error);
+    throw error;
+  }
+};
+
+export const createTicket = async (eventId, ticketData) => {
+  try {
+    const cell = new TonWeb.boc.Cell();
+    cell.bits.writeUint(eventId, 32);
+    cell.bits.writeString(JSON.stringify(ticketData));
+
+    const result = await tonweb.call(CONTRACT_ADDRESS, 'create_ticket', cell.toBoc());
+    const ticketId = result.toNumber();
+
+    // Generate QR code
+    const qrCodeData = await QRCode.toDataURL(JSON.stringify({ ticketId, eventId }));
+
+    return { ticketId, qrCodeData };
+  } catch (error) {
+    console.error('Error creating ticket:', error);
     throw error;
   }
 };
