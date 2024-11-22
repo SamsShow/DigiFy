@@ -1,3 +1,4 @@
+import TonConnect from '@tonconnect/sdk';
 import TonWeb from 'tonweb';
 import QRCode from 'qrcode';
 
@@ -5,25 +6,69 @@ const tonweb = new TonWeb(new TonWeb.HttpProvider('https://toncenter.com/api/v2/
 
 const CONTRACT_ADDRESS = 'EQCZ0v66LSJAZuHYE4p_ppjCQRZqyjFPCuBj33D0IC8eQz1_';
 
+// Initialize TonConnect
+const tonConnectOptions = {
+  manifestUrl: 'https://ton-connect.github.io/demo-dapp-with-react-ui/tonconnect-manifest.json',
+};
+const tonConnect = new TonConnect(tonConnectOptions);
+
 export const connectWallet = async () => {
-  // This is a placeholder. You'll need to implement actual wallet connection logic
-  // using TonConnect or another method compatible with your setup.
-  console.warn('Wallet connection not implemented');
-  return null;
+  try {
+    // Check if wallet is already connected
+    if (tonConnect.connected) {
+      return tonConnect.wallet;
+    }
+
+    // If not connected, initiate connection
+    const walletConnectionSource = {
+      universalLink: 'https://app.tonkeeper.com/ton-connect',
+      bridgeUrl: 'https://bridge.tonapi.io/bridge',
+    };
+
+    await tonConnect.connect(walletConnectionSource);
+
+    // Wait for the connection to be established
+    return new Promise((resolve) => {
+      const unsubscribe = tonConnect.onStatusChange((wallet) => {
+        if (wallet) {
+          unsubscribe();
+          resolve(wallet);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('Failed to connect wallet:', error);
+    throw error;
+  }
 };
 
 export const createEvent = async (name, date, ticketPrice, maxTickets) => {
   try {
-    // This is a placeholder. You'll need to implement the actual method call
-    // based on your smart contract's structure
-    const cell = new TonWeb.boc.Cell();
-    cell.bits.writeString('create_event');
-    cell.bits.writeString(name);
-    cell.bits.writeUint(date, 64);
-    cell.bits.writeCoins(TonWeb.utils.toNano(ticketPrice));
-    cell.bits.writeUint(maxTickets, 32);
+    if (!tonConnect.connected) {
+      throw new Error('Wallet not connected');
+    }
 
-    const result = await tonweb.sendBoc(cell.toBoc());
+    const contract = new TonWeb.Contract(tonweb.provider, {
+      address: CONTRACT_ADDRESS,
+      abi: {
+        'ABI version': 2,
+        functions: [{ name: 'createEvent', inputs: [{ name: 'name', type: 'string' }, { name: 'date', type: 'uint256' }, { name: 'ticketPrice', type: 'uint128' }, { name: 'maxTickets', type: 'uint32' }] }]
+      }
+    });
+
+    const payload = await contract.createEvent(name, date, TonWeb.utils.toNano(ticketPrice), maxTickets).getPayload();
+
+    const result = await tonConnect.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 60 * 20, // 20 minutes from now
+      messages: [
+        {
+          address: CONTRACT_ADDRESS,
+          amount: TonWeb.utils.toNano('0.05'),
+          payload,
+        },
+      ],
+    });
+
     return result;
   } catch (error) {
     console.error('Error creating event:', error);
@@ -33,49 +78,54 @@ export const createEvent = async (name, date, ticketPrice, maxTickets) => {
 
 export const createTicket = async (eventId, ticketData) => {
   try {
-    const cell = new TonWeb.boc.Cell();
-    cell.bits.writeUint(eventId, 32);
-    cell.bits.writeString(JSON.stringify(ticketData));
+    if (!tonConnect.connected) {
+      throw new Error('Wallet not connected');
+    }
 
-    const result = await tonweb.call(CONTRACT_ADDRESS, 'create_ticket', cell.toBoc());
-    const ticketId = result.toNumber();
+    const contract = new TonWeb.Contract(tonweb.provider, {
+      address: CONTRACT_ADDRESS,
+      abi: {
+        'ABI version': 2,
+        functions: [{ name: 'buyTicket', inputs: [{ name: 'eventId', type: 'uint32' }] }]
+      }
+    });
+
+    const payload = await contract.buyTicket(eventId).getPayload();
+
+    const result = await tonConnect.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 60 * 20, // 20 minutes from now
+      messages: [
+        {
+          address: CONTRACT_ADDRESS,
+          amount: TonWeb.utils.toNano('0.05'),
+          payload,
+        },
+      ],
+    });
 
     // Generate QR code
-    const qrCodeData = await QRCode.toDataURL(JSON.stringify({ ticketId, eventId }));
+    const qrCodeData = await QRCode.toDataURL(JSON.stringify({ eventId, ticketData }));
 
-    return { ticketId, qrCodeData };
+    return { result, qrCodeData };
   } catch (error) {
     console.error('Error creating ticket:', error);
     throw error;
   }
 };
 
-export const buyTicket = async (eventId) => {
-  try {
-    // This is a placeholder. You'll need to implement the actual method call
-    // based on your smart contract's structure
-    const cell = new TonWeb.boc.Cell();
-    cell.bits.writeString('buy_ticket');
-    cell.bits.writeUint(eventId, 32);
-
-    const result = await tonweb.sendBoc(cell.toBoc());
-    return result;
-  } catch (error) {
-    console.error('Error buying ticket:', error);
-    throw error;
-  }
-};
+export const buyTicket = createTicket; // Alias for createTicket function
 
 export const verifyTicket = async (ticketId, userAddress) => {
   try {
-    // This is a placeholder. You'll need to implement the actual method call
-    // based on your smart contract's structure
-    const cell = new TonWeb.boc.Cell();
-    cell.bits.writeString('verify_ticket');
-    cell.bits.writeUint(ticketId, 32);
-    cell.bits.writeAddress(userAddress);
+    const contract = new TonWeb.Contract(tonweb.provider, {
+      address: CONTRACT_ADDRESS,
+      abi: {
+        'ABI version': 2,
+        functions: [{ name: 'verifyTicket', inputs: [{ name: 'ticketId', type: 'uint32' }, { name: 'userAddress', type: 'address' }] }]
+      }
+    });
 
-    const result = await tonweb.call(CONTRACT_ADDRESS, 'verify_ticket', cell.toBoc());
+    const result = await contract.methods.verifyTicket(ticketId, userAddress).call();
     return result;
   } catch (error) {
     console.error('Error verifying ticket:', error);
@@ -85,9 +135,15 @@ export const verifyTicket = async (ticketId, userAddress) => {
 
 export const getActiveEvents = async () => {
   try {
-    // This is a placeholder. You'll need to implement the actual method call
-    // based on your smart contract's structure
-    const result = await tonweb.call(CONTRACT_ADDRESS, 'get_active_events');
+    const contract = new TonWeb.Contract(tonweb.provider, {
+      address: CONTRACT_ADDRESS,
+      abi: {
+        'ABI version': 2,
+        functions: [{ name: 'getActiveEvents', inputs: [] }]
+      }
+    });
+
+    const result = await contract.methods.getActiveEvents().call();
     return result;
   } catch (error) {
     console.error('Error getting active events:', error);

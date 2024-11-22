@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert';
-import { createTicket } from '../utils/ton-integration';
+import { createTicket, connectWallet } from '../utils/ton-integration';
 
 const OrganizerPage = () => {
   const [ticketData, setTicketData] = useState({
@@ -16,10 +16,42 @@ const OrganizerPage = () => {
   });
   const [createdTicket, setCreatedTicket] = useState(null);
   const [error, setError] = useState('');
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    const checkWalletConnection = async () => {
+      try {
+        const wallet = await connectWallet();
+        setWalletConnected(!!wallet);
+      } catch (err) {
+        console.error('Error checking wallet connection:', err);
+      }
+    };
+
+    checkWalletConnection();
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setTicketData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleConnectWallet = async () => {
+    setConnecting(true);
+    setError('');
+    try {
+      const wallet = await connectWallet();
+      if (wallet) {
+        setWalletConnected(true);
+        setError('');
+      }
+    } catch (err) {
+      setError('Failed to connect wallet. Please try again.');
+      console.error('Error connecting wallet:', err);
+    } finally {
+      setConnecting(false);
+    }
   };
 
   const handleCreateTicket = async (e) => {
@@ -27,9 +59,14 @@ const OrganizerPage = () => {
     setError('');
     setCreatedTicket(null);
 
+    if (!walletConnected) {
+      setError('Please connect your wallet first.');
+      return;
+    }
+
     try {
-      const result = await createTicket(parseInt(ticketData.eventId), ticketData);
-      setCreatedTicket(result);
+      const { result, qrCodeData } = await createTicket(parseInt(ticketData.eventId), ticketData);
+      setCreatedTicket({ transactionResult: result, qrCodeData });
     } catch (err) {
       setError('Failed to create ticket. Please try again.');
       console.error('Error creating ticket:', err);
@@ -50,6 +87,21 @@ const OrganizerPage = () => {
               <CardTitle className="text-2xl font-bold text-center">Create Event Ticket</CardTitle>
             </CardHeader>
             <CardContent>
+              {!walletConnected && (
+                <Button 
+                  onClick={handleConnectWallet} 
+                  className="w-full mb-4 bg-primary hover:bg-primary/90"
+                  disabled={connecting}
+                >
+                  {connecting ? 'Connecting...' : 'Connect Wallet'}
+                </Button>
+              )}
+              {walletConnected && (
+                <Alert className="mb-4 bg-green-900/20 border-green-900">
+                  <AlertTitle>Wallet Connected</AlertTitle>
+                  <AlertDescription>You can now create tickets.</AlertDescription>
+                </Alert>
+              )}
               <form onSubmit={handleCreateTicket} className="space-y-4">
                 <div>
                   <Label htmlFor="eventId">Event ID</Label>
@@ -100,7 +152,7 @@ const OrganizerPage = () => {
                     className="bg-gray-700 text-white"
                   />
                 </div>
-                <Button type="submit" className="w-full bg-primary hover:bg-primary/90">
+                <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={!walletConnected}>
                   Create Ticket
                 </Button>
               </form>
@@ -122,7 +174,7 @@ const OrganizerPage = () => {
                   <Alert variant="default" className="bg-green-900/20 border-green-900">
                     <AlertTitle>Ticket Created Successfully</AlertTitle>
                     <AlertDescription>
-                      <p>Ticket ID: {createdTicket.ticketId}</p>
+                      <p>Transaction Result: {JSON.stringify(createdTicket.transactionResult)}</p>
                       <div className="mt-4">
                         <p className="mb-2">QR Code:</p>
                         <img src={createdTicket.qrCodeData} alt="Ticket QR Code" className="mx-auto" />
